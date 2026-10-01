@@ -1,143 +1,258 @@
 # Secure Local Filesystem REST API
 
-A small FastAPI service for managing files inside a configured sandbox directory. Every user-provided path is resolved and checked against `BASE_DIRECTORY` before filesystem access, preventing path traversal outside the sandbox.
+A secure FastAPI REST service for managing files and directories inside a configured sandbox directory. Every user-provided path is strictly resolved and validated against `BASE_DIRECTORY` before filesystem access, preventing path traversal attacks outside the sandbox.
 
-## Requirements
+---
 
-- Python 3.12+ for local development
-- Docker for container execution
+## 1. Prerequisites
 
-## Configuration
+- **Python 3.12+** (for local development and testing)
+- **Docker** (for containerized execution)
 
-Copy `.env.example` to `.env` when running locally, or provide the variables directly:
+---
+
+## 2. Configuration
+
+Copy `.env.example` to `.env` when running locally, or supply environment variables directly:
 
 ```env
 API_PORT=8080
 BASE_DIRECTORY=./data
 ```
 
-Do not commit a local `.env` file or secrets.
+> **Security Note:** Do not commit a local `.env` file, credentials, or secrets to the repository.
 
-## Run locally
+---
+
+## 3. Local Setup Instructions
 
 From the project root:
 
-```powershell
+```bash
+# Create and activate a virtual environment
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate  # On Linux/macOS
+# or on Windows PowerShell: .\.venv\Scripts\Activate.ps1
+
+# Install dependencies
 pip install -r requirements.txt
+```
+
+---
+
+## 4. Local Run Command
+
+Run using Uvicorn from the project root:
+
+```bash
+export API_PORT=8080
+export BASE_DIRECTORY=./data
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+*(On Windows PowerShell)*:
+```powershell
 $env:API_PORT = "8080"
 $env:BASE_DIRECTORY = "./data"
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-The API is available at `http://localhost:8080`. Interactive API documentation is available at `/docs`.
+The application is accessible at:
+- **Base URL:** `http://localhost:8080`
+- **Interactive OpenAPI Documentation:** `http://localhost:8080/docs`
 
-## Run with Docker
+---
 
-Build the image from the project root:
+## 5. Docker Build & Run Commands
 
-```powershell
+### Build Image
+```bash
 docker build -t file-manager-api .
 ```
 
-Run it with the required port and sandbox mount:
+### Run Container
+```bash
+docker run -p 8080:8080 \
+  -e API_PORT=8080 \
+  -e BASE_DIRECTORY=/app/data \
+  -v $(pwd)/data:/app/data \
+  file-manager-api
+```
 
+*(On Windows PowerShell)*:
 ```powershell
 docker run -p 8080:8080 -e API_PORT=8080 -e BASE_DIRECTORY=/app/data -v ${PWD}/data:/app/data file-manager-api
 ```
 
-The API is available at `http://localhost:8080`.
+---
 
-## Run tests
+## 6. Testing Instructions
 
-From the project root, with the virtual environment activated:
+From the project root with dependencies installed:
 
-```powershell
-python -m pytest -q
+```bash
+python -m pytest tests -v
 ```
 
-## API endpoints
+This verifies deterministic sorting, search, file/directory copy, move, deletion, conflict rejection (409), not-found handling (404), and path traversal prevention (403).
 
-All paths are relative to `BASE_DIRECTORY`.
+---
 
-### List a directory
+## 7. API Endpoints & Specification
 
-`GET /files?path=documents`
+All paths are relative to `BASE_DIRECTORY`. Leading slashes or directory traversal sequences (`..`) are rejected.
 
-The `path` query parameter is optional. The response is sorted with directories first, then files, alphabetically within each group.
+### 1. List Files and Directories
+- **Endpoint:** `GET /files`
+- **Method:** `GET`
+- **Query Parameters:**
+  - `path` *(string, optional, default: "")*: Relative path to a directory within `BASE_DIRECTORY`.
+- **Behavior:** Deterministic directory-first alphabetical listing (directories first alphabetically, then files alphabetically).
+- **Example Request:**
+  ```http
+  GET /files?path=documents HTTP/1.1
+  Host: localhost:8080
+  ```
+- **Example Success Response (200 OK):**
+  ```json
+  [
+    {"name": "reports", "type": "directory", "size": 0},
+    {"name": "report.pdf", "type": "file", "size": 24}
+  ]
+  ```
+
+---
+
+### 2. Search Files
+- **Endpoint:** `GET /search`
+- **Method:** `GET`
+- **Query Parameters:**
+  - `query` *(string, required, min length 1)*: Case-insensitive filename search term.
+  - `path` *(string, optional, default: "")*: Relative subfolder to scope the recursive search.
+- **Behavior:** Recursively searches files from the specified root and returns relative POSIX paths matching the query.
+- **Example Request:**
+  ```http
+  GET /search?query=report&path=documents HTTP/1.1
+  Host: localhost:8080
+  ```
+- **Example Success Response (200 OK):**
+  ```json
+  [
+    "documents/report.pdf"
+  ]
+  ```
+
+---
+
+### 3. Copy File or Directory
+- **Endpoint:** `POST /files/copy`
+- **Method:** `POST`
+- **Request Headers:** `Content-Type: application/json`
+- **Request Body:**
+  ```json
+  {
+    "from": "documents/report.pdf",
+    "to": "archive/report.pdf"
+  }
+  ```
+  *(Note: `"from_path"` is also accepted as an alias for `"from"`)*
+- **Example Success Response (200 OK):**
+  ```json
+  {
+    "message": "Copied successfully from 'documents/report.pdf' to 'archive/report.pdf'"
+  }
+  ```
+
+---
+
+### 4. Move File or Directory
+- **Endpoint:** `POST /files/move`
+- **Method:** `POST`
+- **Request Headers:** `Content-Type: application/json`
+- **Request Body:**
+  ```json
+  {
+    "from": "documents/report.pdf",
+    "to": "archive/report.pdf"
+  }
+  ```
+  *(Note: `"from_path"` is also accepted as an alias for `"from"`)*
+- **Example Success Response (200 OK):**
+  ```json
+  {
+    "message": "Moved successfully from 'documents/report.pdf' to 'archive/report.pdf'"
+  }
+  ```
+
+---
+
+### 5. Delete File or Directory
+- **Endpoint:** `DELETE /files`
+- **Method:** `DELETE`
+- **Query Parameters:**
+  - `path` *(string, required)*: Relative path of the file or directory to delete.
+- **Example Request:**
+  ```http
+  DELETE /files?path=documents/report.pdf HTTP/1.1
+  Host: localhost:8080
+  ```
+- **Example Success Response (200 OK):**
+  ```json
+  {
+    "message": "Deleted successfully: 'documents/report.pdf'"
+  }
+  ```
+
+---
+
+## 8. Error Responses & Status Codes
+
+All errors return a consistent JSON payload:
 
 ```json
-[
-  {"name": "reports", "type": "directory", "size": 0},
-  {"name": "readme.txt", "type": "file", "size": 48}
-]
+{
+  "error": {
+    "message": "Description of the error"
+  }
+}
 ```
 
-### Search for files
+| Status Code | Meaning | Condition |
+| :--- | :--- | :--- |
+| **400 Bad Request** | Invalid Input | Missing required relative path, invalid payload, or attempt to modify the root directory. |
+| **403 Forbidden** | Access Denied | Path traversal attempt (e.g. `../`, `../../`, `../../../`) or absolute path outside `BASE_DIRECTORY`. |
+| **404 Not Found** | Not Found | Source file/directory does not exist, or path is not a directory for listing/search. |
+| **409 Conflict** | Conflict | Destination file or directory already exists during copy or move operations. |
 
-`GET /search?query=report&path=documents`
+---
 
-`query` is required and `path` is optional. The response contains matching file paths relative to `BASE_DIRECTORY`.
+## 9. Security & Path Traversal Protection
 
-```json
-["documents/report.pdf"]
+Path resolution enforces sandboxing without naive string replacements:
+1. Rejects inputs that begin with root slashes (`/` or `\`) or drive letters.
+2. Resolves relative paths using `(BASE_DIRECTORY / candidate).resolve()`.
+3. Verifies that the resolved absolute path is strictly within the allowed boundary using `resolved.relative_to(BASE_DIRECTORY)`.
+4. Any escape attempt (such as `../`, `../../`, `../../../`, or symlink tricks) raises a `PermissionError` and returns HTTP `403 Forbidden`.
+
+---
+
+## 10. Project Structure
+
+```text
+file-manager-api/
+├── Dockerfile
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── app/
+│   ├── __init__.py
+│   └── main.py
+├── data/
+│   ├── documents/
+│   │   └── report.pdf
+│   └── readme.txt
+└── tests/
+    └── test_api.py
 ```
-
-### Copy a file or directory
-
-`POST /files/copy`
-
-```json
-{"from": "documents/report.pdf", "to": "archive/report.pdf"}
-```
-
-Response:
-
-```json
-{"message": "Copied successfully from 'documents/report.pdf' to 'archive/report.pdf'"}
-```
-
-### Move a file or directory
-
-`POST /files/move`
-
-```json
-{"from": "documents/report.pdf", "to": "archive/report.pdf"}
-```
-
-Response:
-
-```json
-{"message": "Moved successfully from 'documents/report.pdf' to 'archive/report.pdf'"}
-```
-
-### Delete a file or directory
-
-`DELETE /files?path=documents/report.pdf`
-
-Response:
-
-```json
-{"message": "Deleted successfully: 'documents/report.pdf'"}
-```
-
-## Errors
-
-Errors use this structure:
-
-```json
-{"error": {"message": "..."}}
-```
-
-- `403`: the resolved path is outside `BASE_DIRECTORY`.
-- `404`: the requested source or directory does not exist.
-- `409`: copy or move would overwrite an existing destination.
-- `400`: the request contains invalid or missing path data.
-
-## Project layout
-
-- `app/main.py`: API routes, path validation, and filesystem operations.
-- `data/`: example sandbox contents.
-- `Dockerfile`: production container definition.
-- `.env.example`: required environment variables.
